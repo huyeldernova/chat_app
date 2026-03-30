@@ -1,0 +1,6 @@
+.env
+src/main/resources/application.yml
+target/
+.idea/
+*.iml
+*.class
