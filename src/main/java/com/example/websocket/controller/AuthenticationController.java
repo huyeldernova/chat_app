@@ -19,6 +19,7 @@ public class AuthenticationController {
 
     private final AuthenticationService authenticationService;
 
+
     @PostMapping("/login")
     public ApiResponse<LoginResponse> authenticate(@RequestBody @Valid LoginRequest request) {
         var result = authenticationService.login(request);
@@ -29,14 +30,15 @@ public class AuthenticationController {
                 .build();
     }
 
+
     @PostMapping("/logout")
-    public ApiResponse<Void> logout(@RequestHeader("Authorization") String authHeader) throws ParseException {
-        String token = authHeader.substring(7);
+    public ApiResponse<Void> logout(@RequestHeader("Authorization") String authHeader)
+            throws ParseException {
+        String token = authHeader.substring(7); // bỏ "Bearer "
         authenticationService.logout(token);
         return ApiResponse.<Void>builder()
                 .code(HttpStatus.OK.value())
                 .message("Logout successful")
                 .build();
     }
-
 }

@@ -1,16 +1,16 @@
 package com.example.websocket.service;
 
 
+import com.example.websocket.common.MessageType;
 import com.example.websocket.dto.request.ChatMessageRequest;
 import com.example.websocket.dto.response.ChatMessageResponse;
 import com.example.websocket.dto.response.PageResponse;
-import com.example.websocket.entity.ChatMessage;
-import com.example.websocket.entity.Conversation;
-import com.example.websocket.entity.User;
+import com.example.websocket.entity.*;
 import com.example.websocket.exception.AppException;
 import com.example.websocket.exception.ErrorCode;
 import com.example.websocket.repository.ChatMessageRepository;
 import com.example.websocket.repository.ConversationRepository;
+import com.example.websocket.repository.MessageMediaRepository;
 import com.example.websocket.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -35,11 +35,10 @@ public class ChatService {
     private final ConversationRepository conversationRepository;
     private final UserRepository userRepository;
     private final SimpMessagingTemplate messagingTemplate;
-    private final MediaService mediaService;
+    private final MessageMediaRepository messageMediaRepository;
 
     @Transactional
     public ChatMessageResponse sendChatMessage(String senderId, ChatMessageRequest request) {
-
 
         var conversation = conversationRepository.findById(request.getConversationId())
                 .orElseThrow(() -> new AppException(ErrorCode.CONVERSATION_NOT_FOUND));
@@ -47,63 +46,87 @@ public class ChatService {
         User sender = userRepository.findById(senderId)
                 .orElseThrow(() -> new AppException(ErrorCode.USER_NOT_FOUND));
 
+        // ① Load và validate media TRƯỚC khi tạo message
+        List<MessageMedia> mediaFiles = new ArrayList<>();
+        if (request.getMediaIds() != null && !request.getMediaIds().isEmpty()) {
+            mediaFiles = messageMediaRepository.findAllById(request.getMediaIds());
+
+            // Validate đủ số lượng
+            if (mediaFiles.size() != request.getMediaIds().size()) {
+                throw new AppException(ErrorCode.FILE_NOT_FOUND);
+            }
+
+            // Validate ownership
+            boolean hasUnauthorized = mediaFiles.stream()
+                    .anyMatch(m -> !m.getUploadedBy().equals(senderId));
+            if (hasUnauthorized) {
+                throw new AppException(ErrorCode.ACCESS_DENIED);
+            }
+        }
+
+        // ② Tạo message
         ChatMessage chatMessage = ChatMessage.builder()
                 .conversation(conversation)
                 .sender(sender)
-                .content(request.getMessage())
-                .messageType(request.getMessageType() != null ? request.getMessageType() : com.example.websocket.common.MessageType.TEXT)
+                .content(request.getMessage() != null && !request.getMessage().isBlank()
+                        ? request.getMessage()
+                        : "[Media]")
+                .messageType(request.getMessageType() != null
+                        ? request.getMessageType()
+                        : MessageType.TEXT)
                 .build();
 
         chatMessageRepository.save(chatMessage);
 
-        if (request.getMediaIds() != null && !request.getMediaIds().isEmpty()) {
-            mediaService.linkFilesToMessage(
-                    request.getMediaIds(),
-                    chatMessage,
-                    senderId
-            );
+        // ③ Link media: update DB + update in-memory cùng lúc — KHÔNG cần reload
+        if (!mediaFiles.isEmpty()) {
+            for (MessageMedia media : mediaFiles) {
+                media.setMessage(chatMessage);
+                media.setStatus(Status.ACTIVE);
+            }
+            messageMediaRepository.saveAll(mediaFiles);
+            chatMessage.setMediaFiles(mediaFiles); // ← sync in-memory với DB
         }
 
-            conversation.setLastMessageContent(chatMessage.getContent());
-            conversation.setLastMessageTime(chatMessage.getSentAt());
-            conversationRepository.save(conversation);
+        conversation.setLastMessageContent(chatMessage.getContent());
+        conversation.setLastMessageTime(chatMessage.getSentAt());
+        conversationRepository.save(conversation);
 
-            log.info("Message saved successfully");
+        log.info("Message saved successfully");
 
-            List<String> recipientIds = conversation.getParticipants().stream()
-                    .map(p -> p.getUser().getId())
-                    .toList();
+        List<String> recipientIds = conversation.getParticipants().stream()
+                .map(p -> p.getUser().getId())
+                .toList();
 
-            ChatMessageResponse response = ChatMessageResponse.builder()
-                    .id(chatMessage.getId())
-                    .tempId(request.getTempId())
-                    .conversationId(conversation.getId())
-                    .conversationAvatar(conversation.getConversationAvatar())
-                    .username(sender.getUsername())
-                    .conversationType(conversation.getConversationType() != null ? conversation.getConversationType().name() : null)
-                    .message(chatMessage.getContent())
-                    .messageMedia(chatMessage.getMediaFiles())
-                    .messageType(chatMessage.getMessageType())
-                    .participants(recipientIds)
-                    .createdAt(chatMessage.getSentAt())
-                    .conversationCreatedBy(senderId)
-                    .build();
+        ChatMessageResponse response = ChatMessageResponse.builder()
+                .id(chatMessage.getId())
+                .tempId(request.getTempId())
+                .conversationId(conversation.getId())
+                .conversationAvatar(conversation.getConversationAvatar())
+                .username(sender.getUsername())
+                .conversationType(conversation.getConversationType() != null
+                        ? conversation.getConversationType().name()
+                        : null)
+                .message(chatMessage.getContent())
+                .messageMedia(chatMessage.getMediaFiles()) // ← đã populated, không cần reload
+                .messageType(chatMessage.getMessageType())
+                .participants(recipientIds)
+                .createdAt(chatMessage.getSentAt())
+                .conversationCreatedBy(senderId)
+                .build();
 
-            recipientIds.forEach(uid -> {
-                try {
-                    ChatMessageResponse perUserResponse = response.toBuilder()
-                            .me(uid.equals(sender.getId()))
-                            .build();
-                    messagingTemplate.convertAndSendToUser(
-                            uid,
-                            "/queue/chat",
-                            perUserResponse);
-                } catch (MessagingException e) {
-                    log.warn("Failed to send realtime message to user {}: {}", uid, e.getMessage());
-                }
-            });
-            return response;
+        recipientIds.forEach(uid -> {
+            try {
+                messagingTemplate.convertAndSendToUser(
+                        uid,
+                        "/queue/chat",
+                        response.toBuilder().me(uid.equals(sender.getId())).build());
+            } catch (MessagingException e) {
+                log.warn("Failed to send realtime message to user {}: {}", uid, e.getMessage());
+            }
+        });
 
+        return response;
     }
 
     @Transactional(readOnly = true)

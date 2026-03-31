@@ -4,6 +4,7 @@ import com.example.websocket.service.UserDetailServiceCustomizer;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.AuthenticationProvider;
 import org.springframework.security.authentication.ProviderManager;
@@ -42,41 +43,36 @@ public class SecurityConfig {
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
-
                 .csrf(AbstractHttpConfigurer::disable)
-
-                .sessionManagement(session -> session
-                        .sessionCreationPolicy(SessionCreationPolicy.STATELESS)
-                )
-
-                .headers(headers -> headers
-                        .frameOptions(HeadersConfigurer.FrameOptionsConfig::sameOrigin))
+                .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .headers(h -> h.frameOptions(HeadersConfigurer.FrameOptionsConfig::sameOrigin))
 
                 .authorizeHttpRequests(auth -> auth
-                        // Public endpoints
-                        .requestMatchers("/api/auth/**").permitAll()
+                        // ── Hoàn toàn public ────────────────────────────────────
+                        .requestMatchers("/api/v1/auth/**").permitAll()           // login, logout
+                        .requestMatchers(HttpMethod.POST, "/api/v1/users").permitAll() // đăng ký
+
+                        // ── WebSocket handshake ──────────────────────────────────
                         .requestMatchers("/ws/**").permitAll()
-                        .requestMatchers("/api/media/**").authenticated()
 
-                        // User endpoints - cần authenticated
-                        .requestMatchers("/api/users/**").authenticated()
+                        // ── Static files ────────────────────────────────────────
+                        .requestMatchers("/", "/index.html", "/static/**").permitAll()
 
-                        // Admin endpoints - cần role ADMIN
-                        .requestMatchers("/api/admin/**").hasAuthority("ADMIN")
-
-                        // Tất cả request khác cần authenticated
+                        // ── Tất cả route còn lại: @PreAuthorize trên controller xử lý ──
                         .anyRequest().authenticated()
                 )
 
                 .oauth2ResourceServer(oauth2 -> oauth2
-                        .jwt(jwtConfigurer -> jwtConfigurer.decoder(jwtDecoder)
-                                .jwtAuthenticationConverter(converter())))
+                        .jwt(jwt -> jwt
+                                .decoder(jwtDecoder)
+                                .jwtAuthenticationConverter(converter())
+                        )
+                )
 
-                .exceptionHandling(exception -> exception
-                        .authenticationEntryPoint(jwtAuthenticationEntryPoint)
-                        .accessDeniedHandler(jwtAccessDeniedHandler)
+                .exceptionHandling(ex -> ex
+                        .authenticationEntryPoint(jwtAuthenticationEntryPoint) // 401
+                        .accessDeniedHandler(jwtAccessDeniedHandler)           // 403
                 );
-
 
         return http.build();
     }

@@ -8,6 +8,7 @@ import com.example.websocket.dto.response.UserDetailResponse;
 import com.example.websocket.service.UserService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -19,10 +20,13 @@ public class UserController {
 
     private final UserService userService;
 
+    /**
+     * POST /api/v1/users
+     * Public — đăng ký tài khoản mới, đã permitAll() trong SecurityConfig
+     */
     @PostMapping
     public ApiResponse<CreateUserResponse> createUser(@RequestBody CreateUserRequest request) {
         var result = userService.createUser(request);
-
         return ApiResponse.<CreateUserResponse>builder()
                 .code(HttpStatus.OK.value())
                 .message("User created successfully")
@@ -30,12 +34,16 @@ public class UserController {
                 .build();
     }
 
-
+    /**
+     * GET /api/v1/users/search?search=query
+     * Cần đăng nhập — chỉ user có role USER hoặc ADMIN mới tìm được
+     */
     @GetMapping("/search")
-    public ApiResponse<List<UserDetailResponse>> searchUsers(@RequestParam("search") String search) {
+    @PreAuthorize("hasAnyAuthority('USER', 'ADMIN')")
+    public ApiResponse<List<UserDetailResponse>> searchUsers(
+            @RequestParam("search") String search) {
         var result = userService.getUserLikeByEmailOrUsername(search);
-
-        return ApiResponse.<java.util.List<com.example.websocket.dto.response.UserDetailResponse>>builder()
+        return ApiResponse.<List<UserDetailResponse>>builder()
                 .code(HttpStatus.OK.value())
                 .message("Search result")
                 .result(result)

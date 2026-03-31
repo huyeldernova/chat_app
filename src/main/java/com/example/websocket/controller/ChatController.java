@@ -20,22 +20,30 @@ public class ChatController {
     private final ChatService chatService;
     private final SimpMessagingTemplate messagingTemplate;
 
+    /**
+     * Nhận tin nhắn từ client qua STOMP destination: /app/chat
+     * Kết quả gửi lại tới từng participant qua: /user/{userId}/queue/chat
+     */
     @MessageMapping("/chat")
     public void handleChat(@Payload ChatMessageRequest request, Principal principal) {
         String senderId = principal != null ? principal.getName() : null;
+
         if (senderId == null) {
-            log.warn("Anonymous sender tried to send chat");
+            log.warn("Anonymous sender — message rejected");
             return;
         }
+
         try {
             var result = chatService.sendChatMessage(senderId, request);
-            log.info("Message sent successfully to {}: {}", senderId, result.getMessage());
+            log.info("Message sent by {} to conversation {}", senderId, request.getConversationId());
         } catch (AppException ex) {
-            log.warn("Chat processing failed: {}", ex.getMessage());
-            messagingTemplate.convertAndSendToUser(senderId, "/queue/errors", ex.getMessage());
+            log.warn("Chat error for user {}: {}", senderId, ex.getMessage());
+            messagingTemplate.convertAndSendToUser(
+                    senderId, "/queue/errors", ex.getMessage());
         } catch (Exception ex) {
-            log.error("Unexpected error processing chat", ex);
-            messagingTemplate.convertAndSendToUser(senderId, "/queue/errors", "Internal server error");
+            log.error("Unexpected error processing chat for user {}", senderId, ex);
+            messagingTemplate.convertAndSendToUser(
+                    senderId, "/queue/errors", "Internal server error");
         }
     }
 }

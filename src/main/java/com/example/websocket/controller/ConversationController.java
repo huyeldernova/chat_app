@@ -1,14 +1,13 @@
 package com.example.websocket.controller;
 
 import com.example.websocket.dto.request.ConversationCreationRequest;
-import com.example.websocket.dto.response.ApiResponse;
-import com.example.websocket.dto.response.ConversationCreationResponse;
-import com.example.websocket.dto.response.ConversationDetailResponse;
-import com.example.websocket.dto.response.PageResponse;
+import com.example.websocket.dto.response.*;
+import com.example.websocket.service.ChatService;
 import com.example.websocket.service.ConversationService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.*;
@@ -19,9 +18,11 @@ import org.springframework.web.bind.annotation.*;
 public class ConversationController {
 
     private final ConversationService conversationService;
+    private final ChatService chatService;
 
     @PostMapping
-    ApiResponse<ConversationCreationResponse> createConversation(
+    @PreAuthorize("hasAnyAuthority('USER', 'ADMIN')")
+    public ApiResponse<ConversationCreationResponse> createConversation(
             @AuthenticationPrincipal Jwt jwt,
             @RequestBody @Valid ConversationCreationRequest request) {
 
@@ -35,11 +36,12 @@ public class ConversationController {
     }
 
     @GetMapping("/my-conversation")
-    ApiResponse<PageResponse<ConversationDetailResponse>> myConversation(
+    @PreAuthorize("hasAnyAuthority('USER', 'ADMIN')")
+    public ApiResponse<PageResponse<ConversationDetailResponse>> myConversation(
             @AuthenticationPrincipal Jwt jwt,
-            @RequestParam(required = false, defaultValue = "1") int page,
-            @RequestParam(required = false, defaultValue = "10") int size,
-            @RequestParam(required = false, defaultValue = "") String conversationType) {
+            @RequestParam(defaultValue = "1")  int page,
+            @RequestParam(defaultValue = "10") int size,
+            @RequestParam(defaultValue = "")   String conversationType) {
 
         var userId = jwt.getSubject();
         var result = conversationService.myConversation(userId, page, size, conversationType);
@@ -50,4 +52,20 @@ public class ConversationController {
                 .build();
     }
 
+    @GetMapping("/{conversationId}/messages")
+    @PreAuthorize("hasAnyAuthority('USER', 'ADMIN')")
+    public ApiResponse<PageResponse<ChatMessageResponse>> getMessages(
+            @AuthenticationPrincipal Jwt jwt,
+            @PathVariable String conversationId,
+            @RequestParam(defaultValue = "1")  int page,
+            @RequestParam(defaultValue = "20") int size) {
+
+        var userId = jwt.getSubject();
+        var result = chatService.getMessagesByConversationId(userId, conversationId, page, size);
+        return ApiResponse.<PageResponse<ChatMessageResponse>>builder()
+                .code(HttpStatus.OK.value())
+                .message("Messages retrieved successfully")
+                .result(result)
+                .build();
+    }
 }
